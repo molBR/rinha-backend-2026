@@ -1,0 +1,10 @@
+# Large binary/data files tracked separately
+resources/references.json.gz
+resources/example-references.json.gz
+
+# Build artifacts
+/api
+/preprocess
+
+# understand-anything
+.understand-anything/

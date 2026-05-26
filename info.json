@@ -1,0 +1,7 @@
+{
+    "participants": ["molbr"],
+    "social": ["https://github.com/molbr"],
+    "source-code-repo": "https://github.com/molbr/rinha-backend-2026",
+    "stack": ["Go", "nginx", "Docker"],
+    "open_to_work": false
+}
