@@ -20,7 +20,7 @@ services:
     build: .
     environment:
       - PORT=8080
-      - GOMAXPROCS=4
+      - GOMAXPROCS=1
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ready || exit 1"]
       interval: 5s
@@ -37,7 +37,7 @@ services:
     build: .
     environment:
       - PORT=8080
-      - GOMAXPROCS=4
+      - GOMAXPROCS=1
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ready || exit 1"]
       interval: 5s

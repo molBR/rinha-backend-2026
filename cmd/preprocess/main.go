@@ -1,4 +1,6 @@
 // preprocess converts references.json.gz to a compact binary format for fast startup.
+// It also reservoir-samples the input down to maxSamples vectors so the engine
+// can complete a KNN search in a few milliseconds under the 0.45-CPU Docker limit.
 //
 // Binary layout:
 //
@@ -13,11 +15,15 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"log"
+	"math/rand"
 	"os"
 	"time"
 )
 
-const dims = 14
+const (
+	dims       = 14
+	maxSamples = 500_000 // reservoir size — balances accuracy vs query latency
+)
 
 func encodeVal(v float64) uint16 {
 	s := (v + 1.0) * 32767.5
@@ -28,6 +34,11 @@ func encodeVal(v float64) uint16 {
 		return 65535
 	}
 	return uint16(s)
+}
+
+type sample struct {
+	vec   [dims]uint16
+	label uint8
 }
 
 func main() {
@@ -47,18 +58,8 @@ func main() {
 	}
 	defer gz.Close()
 
-	outf, err := os.Create(os.Args[2])
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer outf.Close()
-	bw := bufio.NewWriterSize(outf, 1<<20)
-
-	// Reserve 4 bytes for N
-	nPlaceholder := make([]byte, 4)
-	if _, err := bw.Write(nPlaceholder); err != nil {
-		log.Fatal(err)
-	}
+	log.Println("reading and sampling references...")
+	start := time.Now()
 
 	type entry struct {
 		Vector [dims]float64 `json:"vector"`
@@ -70,43 +71,72 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Println("converting references...")
-	start := time.Now()
+	// Reservoir sampling: keep a uniform random sample of size maxSamples.
+	reservoir := make([]sample, 0, maxSamples)
+	rng := rand.New(rand.NewSource(42))
+	total := 0
 
-	var n uint32
-	vecBuf := make([]byte, dims*2)
 	var e entry
-	var labels []byte
-
 	for dec.More() {
 		if err := dec.Decode(&e); err != nil {
 			log.Fatal(err)
 		}
+
+		var vec [dims]uint16
 		for j := 0; j < dims; j++ {
-			binary.LittleEndian.PutUint16(vecBuf[j*2:], encodeVal(e.Vector[j]))
+			vec[j] = encodeVal(e.Vector[j])
+		}
+		lbl := uint8(0)
+		if e.Label == "fraud" {
+			lbl = 1
+		}
+
+		total++
+		if len(reservoir) < maxSamples {
+			reservoir = append(reservoir, sample{vec, lbl})
+		} else {
+			j := rng.Intn(total)
+			if j < maxSamples {
+				reservoir[j] = sample{vec, lbl}
+			}
+		}
+	}
+
+	log.Printf("sampled %d / %d vectors (%.1f%%) in %s",
+		len(reservoir), total, 100*float64(len(reservoir))/float64(total), time.Since(start))
+
+	// Write binary output.
+	outf, err := os.Create(os.Args[2])
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer outf.Close()
+	bw := bufio.NewWriterSize(outf, 1<<20)
+
+	n := uint32(len(reservoir))
+	if err := binary.Write(bw, binary.LittleEndian, n); err != nil {
+		log.Fatal(err)
+	}
+
+	vecBuf := make([]byte, dims*2)
+	for _, s := range reservoir {
+		for j := 0; j < dims; j++ {
+			binary.LittleEndian.PutUint16(vecBuf[j*2:], s.vec[j])
 		}
 		if _, err := bw.Write(vecBuf); err != nil {
 			log.Fatal(err)
 		}
-		if e.Label == "fraud" {
-			labels = append(labels, 1)
-		} else {
-			labels = append(labels, 0)
-		}
-		n++
 	}
 
-	if _, err := bw.Write(labels); err != nil {
-		log.Fatal(err)
+	for _, s := range reservoir {
+		if err := bw.WriteByte(s.label); err != nil {
+			log.Fatal(err)
+		}
 	}
+
 	if err := bw.Flush(); err != nil {
 		log.Fatal(err)
 	}
 
-	// Write N at the start
-	if _, err := outf.WriteAt(binary.LittleEndian.AppendUint32(nil, n), 0); err != nil {
-		log.Fatal(err)
-	}
-
-	log.Printf("wrote %d vectors in %s", n, time.Since(start))
+	log.Printf("wrote %d vectors to %s", n, os.Args[2])
 }

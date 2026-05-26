@@ -10,14 +10,12 @@ import (
 	"math"
 	"os"
 	"strings"
-	"sync"
 	"time"
 )
 
 const (
-	dims     = 14
-	k        = 5
-	numShard = 8
+	dims = 14
+	k    = 5
 )
 
 // Engine holds the reference dataset and runs fraud scoring.
@@ -197,20 +195,18 @@ type candidate struct {
 	label uint8
 }
 
-// shardState is per-goroutine top-k state, recycled via sync.Pool to avoid allocs.
-type shardState struct {
+// topK holds the running top-k candidates during a scan.
+type topK struct {
 	top    [k]candidate
 	maxIdx int
 }
 
-func (s *shardState) reset() {
-	for i := range s.top {
-		s.top[i].dist = math.MaxInt64
+func (t *topK) reset() {
+	for i := range t.top {
+		t.top[i].dist = math.MaxInt64
 	}
-	s.maxIdx = 0
+	t.maxIdx = 0
 }
-
-var statePool = sync.Pool{New: func() any { return &shardState{} }}
 
 func (e *Engine) knnSearch(query [dims]uint16) float32 {
 	// Pre-convert query to int64 to avoid repeated conversions in the inner loop.
@@ -219,52 +215,12 @@ func (e *Engine) knnSearch(query [dims]uint16) float32 {
 		q[j] = int64(query[j])
 	}
 
-	chunkSize := e.n / numShard
-	var parts [numShard][k]candidate
-	var wg sync.WaitGroup
-
-	for s := 0; s < numShard; s++ {
-		wg.Add(1)
-		start := s * chunkSize
-		end := start + chunkSize
-		if s == numShard-1 {
-			end = e.n
-		}
-		sIdx := s
-		go func() {
-			defer wg.Done()
-			st := statePool.Get().(*shardState)
-			st.reset()
-			searchRange(e.vectors, e.labels, q, start, end, st)
-			parts[sIdx] = st.top
-			statePool.Put(st)
-		}()
-	}
-	wg.Wait()
-
-	// Merge all shard top-k via selection sort (numShard×k = 20 elements max).
-	var all [k * numShard]candidate
-	for s := 0; s < numShard; s++ {
-		copy(all[s*k:], parts[s][:])
-	}
-	var used [k * numShard]bool
-	var top [k]candidate
-	for i := 0; i < k; i++ {
-		minDist, minIdx := int64(math.MaxInt64), -1
-		for j := range all {
-			if !used[j] && all[j].dist < minDist {
-				minDist, minIdx = all[j].dist, j
-			}
-		}
-		if minIdx < 0 {
-			break
-		}
-		top[i] = all[minIdx]
-		used[minIdx] = true
-	}
+	var tk topK
+	tk.reset()
+	searchRange(e.vectors, e.labels, q, 0, e.n, &tk)
 
 	var fraudCount int
-	for _, c := range top {
+	for _, c := range tk.top {
 		if c.label == 1 {
 			fraudCount++
 		}
@@ -272,7 +228,7 @@ func (e *Engine) knnSearch(query [dims]uint16) float32 {
 	return float32(fraudCount) / 5
 }
 
-func searchRange(vecs []uint16, labels []uint8, q [dims]int64, start, end int, st *shardState) {
+func searchRange(vecs []uint16, labels []uint8, q [dims]int64, start, end int, st *topK) {
 	top := &st.top
 	maxDist := top[st.maxIdx].dist
 
