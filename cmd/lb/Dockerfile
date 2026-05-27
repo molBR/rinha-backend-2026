@@ -2,7 +2,7 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /src
 COPY go.mod ./
-COPY main.go ./
+COPY *.go ./
 
 # Build for target architecture. TARGETARCH is set by docker buildx --platform;
 # defaults to amd64 for plain docker build (competition uses docker compose up --build).
