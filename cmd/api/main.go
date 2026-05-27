@@ -11,6 +11,17 @@ import (
 	"rinha-backend-2026/internal/fraud"
 )
 
+// precomputed holds the 6 possible JSON responses indexed by fraud neighbor count (0–5).
+// Avoids json.Marshal on the hot path.
+var precomputed = [6][]byte{
+	[]byte(`{"approved":true,"fraud_score":0.0}`),
+	[]byte(`{"approved":true,"fraud_score":0.2}`),
+	[]byte(`{"approved":true,"fraud_score":0.4}`),
+	[]byte(`{"approved":false,"fraud_score":0.6}`),
+	[]byte(`{"approved":false,"fraud_score":0.8}`),
+	[]byte(`{"approved":false,"fraud_score":1.0}`),
+}
+
 var engine *fraud.Engine
 
 func main() {
@@ -43,11 +54,6 @@ func readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-type fraudResponse struct {
-	Approved   bool    `json:"approved"`
-	FraudScore float32 `json:"fraud_score"`
-}
-
 func fraudScoreHandler(w http.ResponseWriter, r *http.Request) {
 	var req fraud.Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -55,13 +61,9 @@ func fraudScoreHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	score, approved := engine.Score(&req)
-
+	idx := engine.ScoreIdx(&req)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(fraudResponse{
-		Approved:   approved,
-		FraudScore: score,
-	})
+	w.Write(precomputed[idx]) //nolint:errcheck
 }
 
 func getenv(key, def string) string {

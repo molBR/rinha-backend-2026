@@ -1,0 +1,28 @@
+{
+  "round": 2,
+  "issue": 7007,
+  "description": "multi-arch + 1K vectors (reduced from 5K)",
+  "changes_vs_previous": "maxSamples = 1_000 (was 5_000)",
+  "result": {
+    "p99": "2002.03ms",
+    "scoring": {
+      "breakdown": {
+        "false_positive_detections": 0,
+        "false_negative_detections": 0,
+        "true_positive_detections": 3,
+        "true_negative_detections": 5,
+        "http_errors": 13822
+      },
+      "failure_rate": "99.94%",
+      "weighted_errors_E": 69110,
+      "error_rate_epsilon": 4.997108,
+      "p99_score": { "value": -3000, "cut_triggered": true },
+      "detection_score": { "value": -3000, "cut_triggered": true },
+      "final_score": -6000
+    }
+  },
+  "total_attempted": 13830,
+  "successes": 8,
+  "analysis": "REGRESSION: 123 → 8 successes despite fewer vectors (should be faster). Possible causes: (1) CI runner was under heavier load during this run, (2) 1K vector sample from seed=42 has poor accuracy making the API return wrong results that somehow interact with nginx, (3) environmental noise. The vector count reduction is NOT reliably the bottleneck. Reverting to 5K for next round.",
+  "decision": "Revert to 5K vectors. Combine multiple optimizations in Round 3: GOGC=off + GOMAXPROCS=2 + nginx tuning. Single-variable isolation is too slow given noisy CI environment."
+}

@@ -17,7 +17,7 @@ RUN /preprocess-native /src/resources/references.json.gz /references.bin
 # Build the API server for the TARGET architecture (multi-arch support).
 # TARGETARCH is set automatically by `docker buildx --platform`.
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOAMD64=v3 \
     go build -ldflags="-s -w" -o /api ./cmd/api
 
 FROM alpine:3.21
@@ -30,6 +30,10 @@ ENV REFERENCES_PATH=/resources/references.bin
 ENV MCC_RISK_PATH=/resources/mcc_risk.json
 ENV NORMALIZATION_PATH=/resources/normalization.json
 ENV PORT=8080
+# Disable GC — data is tiny (~145KB), no benefit from collection, eliminates STW pauses
+ENV GOGC=off
+# Soft memory limit — prevents OOM kill under burst load
+ENV GOMEMLIMIT=140MiB
 
 EXPOSE 8080
 ENTRYPOINT ["/api"]

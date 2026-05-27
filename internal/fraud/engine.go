@@ -183,11 +183,18 @@ func encodeVal(v float64) uint16 {
 }
 
 // Score returns the fraud score and approval decision for a transaction.
+// Kept for test compatibility — hot path should use ScoreIdx.
 func (e *Engine) Score(req *Request) (fraudScore float32, approved bool) {
-	vec := e.buildVector(req)
-	fraudScore = e.knnSearch(vec)
+	fraudCount := e.knnSearch(e.buildVector(req))
+	fraudScore = float32(fraudCount) / 5
 	approved = fraudScore < 0.6
 	return
+}
+
+// ScoreIdx returns the raw fraud neighbor count (0–5) for use with
+// a precomputed response table. Avoids the float32 divide and re-multiply.
+func (e *Engine) ScoreIdx(req *Request) int {
+	return e.knnSearch(e.buildVector(req))
 }
 
 type candidate struct {
@@ -208,7 +215,8 @@ func (t *topK) reset() {
 	t.maxIdx = 0
 }
 
-func (e *Engine) knnSearch(query [dims]uint16) float32 {
+// knnSearch returns the raw fraud neighbor count (0–5).
+func (e *Engine) knnSearch(query [dims]uint16) int {
 	// Pre-convert query to int64 to avoid repeated conversions in the inner loop.
 	var q [dims]int64
 	for j := 0; j < dims; j++ {
@@ -225,7 +233,7 @@ func (e *Engine) knnSearch(query [dims]uint16) float32 {
 			fraudCount++
 		}
 	}
-	return float32(fraudCount) / 5
+	return fraudCount
 }
 
 func searchRange(vecs []uint16, labels []uint8, q [dims]int64, start, end int, st *topK) {
