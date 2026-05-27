@@ -1,12 +1,13 @@
 package main
 
 import (
-	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"runtime"
 	"strconv"
+	"sync"
 
 	"rinha-backend-2026/internal/fraud"
 )
@@ -20,6 +21,15 @@ var precomputed = [6][]byte{
 	[]byte(`{"approved":false,"fraud_score":0.6}`),
 	[]byte(`{"approved":false,"fraud_score":0.8}`),
 	[]byte(`{"approved":false,"fraud_score":1.0}`),
+}
+
+// bodyPool reuses read buffers to avoid per-request allocation for request bodies.
+// Competition payloads are ~500–800 bytes; 4096 is always sufficient.
+var bodyPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 4096)
+		return &b
+	},
 }
 
 var engine *fraud.Engine
@@ -55,13 +65,36 @@ func readyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func fraudScoreHandler(w http.ResponseWriter, r *http.Request) {
-	var req fraud.Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	// Read body into pooled buffer — avoids allocation for the common case.
+	bufPtr := bodyPool.Get().(*[]byte)
+	buf := *bufPtr
+	n, err := io.ReadFull(r.Body, buf)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		// Body larger than 4096 — fall back (shouldn't happen in practice).
+		bodyPool.Put(bufPtr)
+		rest, err2 := io.ReadAll(r.Body)
+		if err2 != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		data := append(buf[:n], rest...)
+		idx, parseErr := engine.ParseAndScore(data)
+		if parseErr != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(precomputed[idx]) //nolint:errcheck
 		return
 	}
 
-	idx := engine.ScoreIdx(&req)
+	body := buf[:n]
+	idx, parseErr := engine.ParseAndScore(body)
+	bodyPool.Put(bufPtr)
+	if parseErr != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(precomputed[idx]) //nolint:errcheck
 }
