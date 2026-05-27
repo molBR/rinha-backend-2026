@@ -1,0 +1,27 @@
+{
+  "round": "pre-round-01",
+  "issue": 6968,
+  "description": "5K vectors, GOMAXPROCS=1, amd64-only image",
+  "changes_vs_previous": "maxSamples reduced from 30K to 5K",
+  "result": {
+    "p99": "2002.08ms",
+    "scoring": {
+      "breakdown": {
+        "false_positive_detections": 0,
+        "false_negative_detections": 0,
+        "true_positive_detections": 12,
+        "true_negative_detections": 15,
+        "http_errors": 13802
+      },
+      "failure_rate": "99.8%",
+      "weighted_errors_E": 69010,
+      "error_rate_epsilon": 4.990238,
+      "p99_score": { "value": -3000, "cut_triggered": true },
+      "detection_score": { "value": -3000, "cut_triggered": true },
+      "final_score": -6000
+    }
+  },
+  "total_attempted": 13829,
+  "successes": 27,
+  "analysis": "27 successes then complete timeout saturation. KNN speed NOT the bottleneck (fewer successes than 30K run). Suspect QEMU emulation making nginx (0.1 CPU) saturate at ~20 req/s."
+}
