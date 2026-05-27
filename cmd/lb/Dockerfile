@@ -4,8 +4,9 @@ WORKDIR /src
 COPY go.mod ./
 COPY main.go ./
 
-# Build for target architecture (set by docker buildx --platform).
-ARG TARGETARCH
+# Build for target architecture. TARGETARCH is set by docker buildx --platform;
+# defaults to amd64 for plain docker build (competition uses docker compose up --build).
+ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w" -o /lb .
 
