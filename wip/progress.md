@@ -23,9 +23,9 @@
 **Change:** Dockerfile modified to use `ARG TARGETARCH` and compile for both linux/amd64 and linux/arm64.
 **Everything else:** unchanged (5K vectors, GOMAXPROCS=1, GOGC default)
 
-- [ ] Dockerfile updated
-- [ ] Image built and pushed (linux/amd64 + linux/arm64)
-- [ ] Issue submitted
+- [x] Dockerfile updated (ARG TARGETARCH, preprocess-native for builder arch)
+- [x] Image built and pushed (linux/amd64 + linux/arm64) — manifest sha256:5b9f9d4...
+- [x] Issue submitted → #6998
 - [ ] Result received
 - [ ] Result recorded in results/round-01.json
 

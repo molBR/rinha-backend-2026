@@ -1,0 +1,28 @@
+{
+  "round": 1,
+  "issue": 6998,
+  "description": "Multi-arch image (linux/amd64 + linux/arm64), 5K vectors, GOMAXPROCS=1",
+  "changes_vs_previous": "Dockerfile uses ARG TARGETARCH; buildx builds arm64 + amd64 layers",
+  "result": {
+    "p99": "2002.04ms",
+    "scoring": {
+      "breakdown": {
+        "false_positive_detections": 0,
+        "false_negative_detections": 0,
+        "true_positive_detections": 60,
+        "true_negative_detections": 63,
+        "http_errors": 13707
+      },
+      "failure_rate": "99.11%",
+      "weighted_errors_E": 68535,
+      "error_rate_epsilon": 4.955531,
+      "p99_score": { "value": -3000, "cut_triggered": true },
+      "detection_score": { "value": -3000, "cut_triggered": true },
+      "final_score": -6000
+    }
+  },
+  "total_attempted": 13830,
+  "successes": 123,
+  "analysis": "4.56× improvement vs previous (27→123 successes). CONFIRMS competition machine is ARM64 — native binary is faster than QEMU. Still -6000 because nginx (0.1 CPU) saturates at ~43 req/s on slow ARM hardware. Need to either reduce per-request CPU time further or tune nginx.",
+  "key_observation": "4.5× more successes with arm64 native. Platform confirmed: linux/arm64. Next: reduce 5K→1K vectors to shrink per-request CPU by 5×."
+}

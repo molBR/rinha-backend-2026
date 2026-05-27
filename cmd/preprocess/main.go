@@ -22,7 +22,7 @@ import (
 
 const (
 	dims       = 14
-	maxSamples = 5_000 // reservoir size — balances accuracy vs query latency
+	maxSamples = 1_000 // reservoir size — reduced for competition hardware speed
 )
 
 func encodeVal(v float64) uint16 {
