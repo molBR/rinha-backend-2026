@@ -26,7 +26,7 @@ func TestParseAndScoreMatchesScoreIdx(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &req); err != nil {
 			t.Fatalf("sample %d: json.Unmarshal: %v", i, err)
 		}
-		wantIdx := engine.ScoreIdx(&req)
+		wantIdx := engine.GridScoreIdx(&req)
 
 		gotIdx, err := engine.ParseAndScore([]byte(raw))
 		if err != nil {

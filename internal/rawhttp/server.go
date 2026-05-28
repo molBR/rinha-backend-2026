@@ -20,18 +20,21 @@ type Handler interface {
 }
 
 var (
-	fraudResponses   [6][]byte
+	// k=3 precomputed responses: fraud_score = fraudCount/3.
+	// count=0 → 0.0  (approved)
+	// count=1 → 0.33333334  (approved, float32(1/3))
+	// count=2 → 0.6666667   (rejected, float32(2/3))
+	// count=3 → 1.0  (rejected)
+	fraudResponses   [4][]byte
 	readyResponse    []byte
 	notFoundResponse []byte
 )
 
 func init() {
-	bodies := [6]string{
+	bodies := [4]string{
 		`{"approved":true,"fraud_score":0.0}`,
-		`{"approved":true,"fraud_score":0.2}`,
-		`{"approved":true,"fraud_score":0.4}`,
-		`{"approved":false,"fraud_score":0.6}`,
-		`{"approved":false,"fraud_score":0.8}`,
+		`{"approved":true,"fraud_score":0.33333334}`,
+		`{"approved":false,"fraud_score":0.6666667}`,
 		`{"approved":false,"fraud_score":1.0}`,
 	}
 	for i, body := range bodies {
@@ -267,7 +270,8 @@ func (e *requestError) Error() string { return e.msg }
 
 var errRequestTooLarge = &requestError{"request too large"}
 
-// FraudResponse returns the precomputed HTTP response for the given fraud count (0–5).
+// FraudResponse returns the precomputed HTTP response for the given fraud count (0–3).
+// With k=3 (grid search), count is always in [0,3].
 func FraudResponse(count int) []byte {
 	if count < 0 || count >= len(fraudResponses) {
 		return fraudResponses[0]

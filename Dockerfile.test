@@ -1,0 +1,38 @@
+# Dockerfile.test — same as production Dockerfile but uses example-references.json.gz
+# (100 vectors, fast startup) for local performance testing of the stack under
+# Docker CFS CPU throttling. Results will have wrong KNN accuracy but correct
+# rawhttp/SCM_RIGHTS performance characteristics.
+#
+# Build: docker build -f Dockerfile.test -t rinha-test-api:local .
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /src
+COPY go.mod ./
+RUN go mod download
+COPY . .
+
+# Build preprocessor for builder's native arch.
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /preprocess-native ./cmd/preprocess
+
+# Use example-references.json.gz (100 vectors) for fast local testing.
+RUN /preprocess-native /src/resources/example-references.json.gz /references.bin
+
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w" -o /api ./cmd/api
+
+FROM alpine:3.21
+COPY --from=builder /api                          /api
+COPY --from=builder /references.bin               /resources/references.bin
+COPY resources/mcc_risk.json                      /resources/mcc_risk.json
+COPY resources/normalization.json                 /resources/normalization.json
+
+ENV REFERENCES_PATH=/resources/references.bin
+ENV MCC_RISK_PATH=/resources/mcc_risk.json
+ENV NORMALIZATION_PATH=/resources/normalization.json
+ENV PORT=8080
+ENV GOGC=off
+ENV GOMEMLIMIT=140MiB
+
+EXPOSE 8080
+ENTRYPOINT ["/api"]

@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,6 +27,8 @@ type Engine struct {
 
 	norm    normalization
 	mccRisk map[string]float64
+
+	grid *GridIndex // accelerated k=3 search; built after vectors are loaded
 }
 
 type normalization struct {
@@ -81,15 +84,47 @@ func (e *Engine) loadReferences(path string) error {
 	if strings.HasSuffix(path, ".bin") {
 		err := e.loadBinary(path)
 		if err == nil {
-			log.Printf("loaded %d reference vectors in %s", e.n, time.Since(start))
+			e.maybeRepeatVectors()
+			e.grid = buildGrid(&e.vectors, &e.labels, e.n)
+			log.Printf("loaded %d reference vectors in %s (grid: %d cells, contiguous layout)", e.n, time.Since(start), gridTotal)
 		}
 		return err
 	}
 	err := e.loadJSON(path)
 	if err == nil {
-		log.Printf("loaded %d reference vectors in %s", e.n, time.Since(start))
+		e.maybeRepeatVectors()
+		e.grid = buildGrid(&e.vectors, &e.labels, e.n)
+		log.Printf("loaded %d reference vectors in %s (grid: %d cells, contiguous layout)", e.n, time.Since(start), gridTotal)
 	}
 	return err
+}
+
+// maybeRepeatVectors inflates the dataset by repeating vectors when TEST_VECTOR_REPEAT
+// is set to N. Used for local performance testing to simulate larger datasets (e.g., N=50
+// turns 100 example vectors into 5000 to match production KNN cost under Docker CFS).
+// Has no effect in production (TEST_VECTOR_REPEAT is never set in the Dockerfile).
+func (e *Engine) maybeRepeatVectors() {
+	n, err := strconv.Atoi(os.Getenv("TEST_VECTOR_REPEAT"))
+	if err != nil || n <= 1 {
+		return
+	}
+	origN := e.n
+	origVecs := make([]uint16, len(e.vectors))
+	copy(origVecs, e.vectors)
+	origLabels := make([]uint8, len(e.labels))
+	copy(origLabels, e.labels)
+
+	for e.n < origN*n {
+		e.vectors = append(e.vectors, origVecs...)
+		e.labels = append(e.labels, origLabels...)
+		e.n += origN
+	}
+	// Trim to exact target
+	target := origN * n
+	e.vectors = e.vectors[:target*dims]
+	e.labels = e.labels[:target]
+	e.n = target
+	log.Printf("TEST: inflated %d → %d vectors for local perf testing", origN, e.n)
 }
 
 func (e *Engine) loadBinary(path string) error {
@@ -195,6 +230,28 @@ func (e *Engine) Score(req *Request) (fraudScore float32, approved bool) {
 // a precomputed response table. Avoids the float32 divide and re-multiply.
 func (e *Engine) ScoreIdx(req *Request) int {
 	return e.knnSearch(e.buildVector(req))
+}
+
+// GridScoreIdx runs the fast grid-accelerated k=3 search on a Request and
+// returns the fraud count (0–3). Used in tests to provide a reference result
+// that matches the hot-path ParseAndScore result.
+func (e *Engine) GridScoreIdx(req *Request) int {
+	return e.GridScoreIdxVec(e.buildVector(req))
+}
+
+// GridScoreIdxVec runs the fast grid-accelerated k=3 search on an already-built
+// [dims]uint16 vector and returns the fraud count (0–3). This is the hot-path
+// entry point called from ParseAndScore.
+func (e *Engine) GridScoreIdxVec(vec [dims]uint16) int {
+	if e.grid == nil {
+		// Fallback: brute-force k=5 (shouldn't happen in production).
+		return e.knnSearch(vec)
+	}
+	var q [dims]int64
+	for j := 0; j < dims; j++ {
+		q[j] = int64(vec[j])
+	}
+	return e.grid.gridSearch(e.vectors, e.labels, q)
 }
 
 type candidate struct {

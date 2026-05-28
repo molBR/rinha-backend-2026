@@ -1,0 +1,83 @@
+# docker-compose.test.yml
+# Mirrors exact competition resource limits for local validation.
+# Uses rinha-test-api:local (built from Dockerfile.test with 100 vectors).
+#
+# Build first:  docker build -f Dockerfile.test -t rinha-test-api:local .
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   go run ./cmd/loadtest --addr http://localhost:9999 --requests 500 --burst
+#   docker compose -f docker-compose.test.yml down
+
+services:
+  lb:
+    image: molbr/rinha-backend-2026-lb:latest
+    environment:
+      - WORKER_SOCKETS=/sockets/lb-ctrl-1.sock,/sockets/lb-ctrl-2.sock
+      - LISTEN_ADDR=:9999
+    volumes:
+      - sockets:/sockets
+    ports:
+      - "9999:9999"
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "30MB"
+    restart: unless-stopped
+
+  api1:
+    image: rinha-test-api:local
+    environment:
+      - PORT=8080
+      - GOMAXPROCS=1
+      - CTRL_SOCKET=/sockets/lb-ctrl-1.sock
+      - TEST_VECTOR_REPEAT=50
+    volumes:
+      - sockets:/sockets
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "140MB"
+    restart: unless-stopped
+
+  api2:
+    image: rinha-test-api:local
+    environment:
+      - PORT=8080
+      - GOMAXPROCS=1
+      - CTRL_SOCKET=/sockets/lb-ctrl-2.sock
+      - TEST_VECTOR_REPEAT=50
+    volumes:
+      - sockets:/sockets
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "140MB"
+    restart: unless-stopped
+
+volumes:
+  sockets:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

@@ -18,7 +18,7 @@ RUN /preprocess-native /src/resources/references.json.gz /references.bin
 # TARGETARCH is set automatically by `docker buildx --platform`.
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOAMD64=v3 \
-    go build -ldflags="-s -w" -o /api ./cmd/api
+    go build -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%dT%H%M%SZ)" -o /api ./cmd/api
 
 FROM alpine:3.21
 COPY --from=builder /api                   /api

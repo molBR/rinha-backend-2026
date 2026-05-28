@@ -26,7 +26,12 @@ func (h *apiHandler) ServeReady() []byte {
 	return rawhttp.ReadyResponse()
 }
 
+// buildTime is stamped at compile time via -ldflags "-X main.buildTime=..."
+// to let us verify the running binary is the expected version in logs.
+var buildTime = "dev"
+
 func main() {
+	log.Printf("starting api build=%s (rawhttp + scm_rights + contiguous-grid k=3)", buildTime)
 	if v := os.Getenv("GOMAXPROCS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			runtime.GOMAXPROCS(n)

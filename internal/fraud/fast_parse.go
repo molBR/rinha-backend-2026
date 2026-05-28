@@ -64,7 +64,7 @@ func (e *Engine) ParseAndScore(data []byte) (int, error) {
 	ltx := parseLastTxFieldsRaw(lastTxObj)
 
 	vec := e.buildVectorFast(tx, cust, merch, term, ltx)
-	return e.knnSearch(vec), nil
+	return e.GridScoreIdxVec(vec), nil
 }
 
 // buildVectorFast is the zero-allocation equivalent of buildVector.

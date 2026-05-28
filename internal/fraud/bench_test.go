@@ -31,6 +31,32 @@ func BenchmarkKNNSearch(b *testing.B) {
 	}
 }
 
+func BenchmarkGridScoreIdxVec(b *testing.B) {
+	eng, err := NewEngine(
+		"../../resources/references.json.gz",
+		"../../resources/mcc_risk.json",
+		"../../resources/normalization.json",
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	query := [dims]uint16{}
+	for j, v := range [dims]float64{
+		0.039, 0.167, 0.050, 0.783, 0.167,
+		-1, -1, 0.029, 0.150, 0,
+		1, 0, 0.2, 0.030,
+	} {
+		query[j] = encodeVal(v)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		eng.GridScoreIdxVec(query)
+	}
+}
+
 func BenchmarkScore(b *testing.B) {
 	eng, err := NewEngine(
 		"../../resources/references.json.gz",
