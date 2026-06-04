@@ -22,8 +22,8 @@ type Handler interface {
 var (
 	// k=5 precomputed responses: fraud_score = fraudCount/5 (exact).
 	// count=0 → 0.0  (approved)
-	// count=1 → 0.2  (approved, threshold <0.4)
-	// count=2 → 0.4  (rejected) ← more aggressive: FN penalised 3× vs FP
+	// count=1 → 0.2  (approved)
+	// count=2 → 0.4  (approved, threshold <0.6)
 	// count=3 → 0.6  (rejected)
 	// count=4 → 0.8  (rejected)
 	// count=5 → 1.0  (rejected)
@@ -37,7 +37,7 @@ func init() {
 	bodies := [6]string{
 		`{"approved":true,"fraud_score":0.0}`,
 		`{"approved":true,"fraud_score":0.2}`,
-		`{"approved":false,"fraud_score":0.4}`,
+		`{"approved":true,"fraud_score":0.4}`,
 		`{"approved":false,"fraud_score":0.6}`,
 		`{"approved":false,"fraud_score":0.8}`,
 		`{"approved":false,"fraud_score":1.0}`,
