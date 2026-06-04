@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -81,22 +82,23 @@ func (e *Engine) loadReferences(path string) error {
 	log.Printf("loading reference vectors from %s...", path)
 	start := time.Now()
 
+	var presorted bool
+	var err error
 	if strings.HasSuffix(path, ".bin") {
-		err := e.loadBinary(path)
-		if err == nil {
-			e.maybeRepeatVectors()
-			e.grid = buildGrid(&e.vectors, &e.labels, e.n)
-			log.Printf("loaded %d reference vectors in %s (grid: %d cells, contiguous layout)", e.n, time.Since(start), gridTotal)
-		}
+		presorted, err = e.loadBinary(path)
+	} else {
+		err = e.loadJSON(path)
+	}
+	if err != nil {
 		return err
 	}
-	err := e.loadJSON(path)
-	if err == nil {
-		e.maybeRepeatVectors()
+	e.maybeRepeatVectors()
+	if !presorted {
+		// Legacy path: reorder vectors into cell-contiguous layout (2× memory spike).
 		e.grid = buildGrid(&e.vectors, &e.labels, e.n)
-		log.Printf("loaded %d reference vectors in %s (grid: %d cells, contiguous layout)", e.n, time.Since(start), gridTotal)
 	}
-	return err
+	log.Printf("loaded %d reference vectors in %s (grid: %d cells, contiguous layout)", e.n, time.Since(start), gridTotal)
+	return nil
 }
 
 // maybeRepeatVectors inflates the dataset by repeating vectors when TEST_VECTOR_REPEAT
@@ -127,33 +129,96 @@ func (e *Engine) maybeRepeatVectors() {
 	log.Printf("TEST: inflated %d → %d vectors for local perf testing", origN, e.n)
 }
 
-func (e *Engine) loadBinary(path string) error {
+// loadBinary reads a binary reference file. Returns presorted=true when the
+// file uses GRD2 format (vectors pre-sorted by grid cell, splits embedded in
+// header) — in that case e.grid is already set and buildGrid must be skipped.
+func (e *Engine) loadBinary(path string) (presorted bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer f.Close()
 	br := bufio.NewReaderSize(f, 1<<20)
 
-	var nBuf [4]byte
-	if _, err := br.Read(nBuf[:]); err != nil {
-		return err
+	// Read first 4 bytes to detect format: "GRD2" magic vs legacy uint32 N.
+	var magic [4]byte
+	if _, err := io.ReadFull(br, magic[:]); err != nil {
+		return false, err
 	}
-	n := int(binary.LittleEndian.Uint32(nBuf[:]))
+
+	if magic == [4]byte{'G', 'R', 'D', '2'} {
+		if err := e.loadBinaryGRD2(br); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	// Legacy format: first 4 bytes are uint32 N (little-endian).
+	n := int(binary.LittleEndian.Uint32(magic[:]))
+	vectors := make([]uint16, n*dims)
+	if err := binary.Read(br, binary.LittleEndian, vectors); err != nil {
+		return false, err
+	}
+	labels := make([]uint8, n)
+	if _, err := io.ReadFull(br, labels); err != nil {
+		return false, err
+	}
+	e.n = n
+	e.vectors = vectors
+	e.labels = labels
+	return false, nil
+}
+
+// loadBinaryGRD2 reads the GRD2 format: pre-sorted vectors with grid splits
+// embedded in the header. No reorder needed — zero extra memory allocation.
+//
+// Format (after the 4-byte "GRD2" magic already consumed):
+//
+//	[4]  uint32 N
+//	[4]  uint32 gridSize (sanity check)
+//	[62] uint16[31] splits0
+//	[62] uint16[31] splits1
+//	[N×28] uint16[14] vectors (sorted by grid cell)
+//	[N]  uint8 labels
+func (e *Engine) loadBinaryGRD2(br *bufio.Reader) error {
+	var buf4 [4]byte
+
+	if _, err := io.ReadFull(br, buf4[:]); err != nil {
+		return fmt.Errorf("GRD2: read N: %w", err)
+	}
+	n := int(binary.LittleEndian.Uint32(buf4[:]))
+
+	if _, err := io.ReadFull(br, buf4[:]); err != nil {
+		return fmt.Errorf("GRD2: read gridSize: %w", err)
+	}
+	gs := int(binary.LittleEndian.Uint32(buf4[:]))
+	if gs != gridSize {
+		return fmt.Errorf("GRD2: gridSize mismatch: file=%d code=%d", gs, gridSize)
+	}
+
+	var splits0, splits1 [gridSize - 1]uint16
+	if err := binary.Read(br, binary.LittleEndian, splits0[:]); err != nil {
+		return fmt.Errorf("GRD2: read splits0: %w", err)
+	}
+	if err := binary.Read(br, binary.LittleEndian, splits1[:]); err != nil {
+		return fmt.Errorf("GRD2: read splits1: %w", err)
+	}
 
 	vectors := make([]uint16, n*dims)
 	if err := binary.Read(br, binary.LittleEndian, vectors); err != nil {
-		return err
+		return fmt.Errorf("GRD2: read vectors: %w", err)
 	}
 
 	labels := make([]uint8, n)
-	if _, err := br.Read(labels); err != nil {
-		return err
+	if _, err := io.ReadFull(br, labels); err != nil {
+		return fmt.Errorf("GRD2: read labels: %w", err)
 	}
 
 	e.n = n
 	e.vectors = vectors
 	e.labels = labels
+	// Build grid index without reordering — vectors are already cell-sorted.
+	e.grid = presortedGridIndex(splits0, splits1, vectors, n)
 	return nil
 }
 

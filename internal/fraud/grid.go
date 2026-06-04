@@ -157,6 +157,30 @@ func (t *topK5) fraudCount() int {
 	return n
 }
 
+// presortedGridIndex builds a GridIndex from vectors that are already sorted
+// by grid cell (as written by the preprocess binary in GRD2 format).
+// This avoids the 2× memory spike of buildGrid's reorder step — no new
+// vector/label arrays are allocated; only the 4KB start[] table is computed
+// via a single sequential scan of the already-sorted vectors.
+func presortedGridIndex(splits0, splits1 [gridSize - 1]uint16, vectors []uint16, n int) *GridIndex {
+	g := &GridIndex{
+		splits0: splits0,
+		splits1: splits1,
+	}
+	var cnt [gridTotal]int32
+	for i := 0; i < n; i++ {
+		d0 := vectors[i*dims+gridDim0]
+		d1 := vectors[i*dims+gridDim1]
+		c := gridRank(d0, g.splits0[:])*gridSize + gridRank(d1, g.splits1[:])
+		cnt[c]++
+	}
+	g.start[0] = 0
+	for i := 0; i < gridTotal; i++ {
+		g.start[i+1] = g.start[i] + cnt[i]
+	}
+	return g
+}
+
 // ── Grid search ───────────────────────────────────────────────────────────────
 
 // gridSearch scans the 3×3 cell neighbourhood of the query using sequential
