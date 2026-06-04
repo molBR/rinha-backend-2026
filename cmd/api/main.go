@@ -18,7 +18,10 @@ var engine *fraud.Engine
 type apiHandler struct{}
 
 func (h *apiHandler) ServeFraudScore(body []byte) []byte {
-	idx, _ := engine.ParseAndScore(body)
+	idx, err := engine.ParseAndScore(body)
+	if err != nil {
+		return rawhttp.BadRequestResponse()
+	}
 	return rawhttp.FraudResponse(idx)
 }
 
@@ -31,7 +34,7 @@ func (h *apiHandler) ServeReady() []byte {
 var buildTime = "dev"
 
 func main() {
-	log.Printf("starting api build=%s (rawhttp + scm_rights + contiguous-grid k=3)", buildTime)
+	log.Printf("starting api build=%s (rawhttp + scm_rights + contiguous-grid k=5)", buildTime)
 	if v := os.Getenv("GOMAXPROCS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			runtime.GOMAXPROCS(n)

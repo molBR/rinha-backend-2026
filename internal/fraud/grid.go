@@ -6,8 +6,8 @@
 // neighbourhood (~9 cells, ≈175 vectors out of 5 K) instead of the full
 // dataset, giving ~29× speedup while preserving approximate k-NN quality.
 //
-// k is reduced to 3 (from 5) to match: approval threshold remains < 0.6
-// → fraudCount ≤ 1 approved, ≥ 2 rejected.
+// k=5 matches the competition spec exactly: approval threshold < 0.6 means
+// fraudCount ≤ 2 approved, ≥ 3 rejected. fraud_score = fraudCount/5.
 //
 // CACHE-FRIENDLY LAYOUT: vectors are reordered at build time so every cell's
 // vectors are stored contiguously in engine.vectors. A 3×3 neighbourhood
@@ -23,10 +23,10 @@ import (
 const (
 	gridDim0  = 0               // partition axis 0: amount
 	gridDim1  = 7               // partition axis 1: km_from_home
-	gridSize  = 16              // buckets per axis
-	gridTotal = gridSize * gridSize // 256 cells
+	gridSize  = 32              // buckets per axis (32×32=1024 cells for 1.5M vectors, ~1465/cell)
+	gridTotal = gridSize * gridSize // 1024 cells
 
-	kGrid = 3 // k for grid-backed search (down from 5)
+	kGrid = 5 // k for grid-backed search (matches competition spec k=5)
 )
 
 // GridIndex stores cell boundary metadata for the contiguous-layout grid.
@@ -119,22 +119,22 @@ func gridRank(v uint16, splits []uint16) int {
 	return lo
 }
 
-// ── k=3 top-k tracker ────────────────────────────────────────────────────────
+// ── k=5 top-k tracker ────────────────────────────────────────────────────────
 
-// topK3 tracks the kGrid=3 closest candidates seen during a scan.
-type topK3 struct {
+// topK5 tracks the kGrid=5 closest candidates seen during a scan.
+type topK5 struct {
 	top    [kGrid]candidate
 	maxIdx int
 }
 
-func (t *topK3) reset() {
+func (t *topK5) reset() {
 	for i := range t.top {
 		t.top[i].dist = math.MaxInt64
 	}
 	t.maxIdx = 0
 }
 
-func (t *topK3) update(dist int64, label uint8) {
+func (t *topK5) update(dist int64, label uint8) {
 	if dist >= t.top[t.maxIdx].dist {
 		return
 	}
@@ -147,7 +147,7 @@ func (t *topK3) update(dist int64, label uint8) {
 	}
 }
 
-func (t *topK3) fraudCount() int {
+func (t *topK5) fraudCount() int {
 	n := 0
 	for _, c := range t.top {
 		if c.label == 1 {
@@ -161,13 +161,13 @@ func (t *topK3) fraudCount() int {
 
 // gridSearch scans the 3×3 cell neighbourhood of the query using sequential
 // memory access (vectors are cell-contiguous after buildGrid). Returns the
-// fraud count among the kGrid=3 nearest neighbours found.
+// fraud count among the kGrid=5 nearest neighbours found.
 // q must already be pre-converted to int64.
 func (g *GridIndex) gridSearch(vectors []uint16, labels []uint8, q [dims]int64) int {
 	qr0 := gridRank(uint16(q[gridDim0]), g.splits0[:])
 	qr1 := gridRank(uint16(q[gridDim1]), g.splits1[:])
 
-	var tk topK3
+	var tk topK5
 	tk.reset()
 
 	for dr0 := -1; dr0 <= 1; dr0++ {

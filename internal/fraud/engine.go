@@ -28,7 +28,7 @@ type Engine struct {
 	norm    normalization
 	mccRisk map[string]float64
 
-	grid *GridIndex // accelerated k=3 search; built after vectors are loaded
+	grid *GridIndex // accelerated k=5 search; built after vectors are loaded
 }
 
 type normalization struct {
@@ -232,15 +232,15 @@ func (e *Engine) ScoreIdx(req *Request) int {
 	return e.knnSearch(e.buildVector(req))
 }
 
-// GridScoreIdx runs the fast grid-accelerated k=3 search on a Request and
-// returns the fraud count (0–3). Used in tests to provide a reference result
+// GridScoreIdx runs the fast grid-accelerated k=5 search on a Request and
+// returns the fraud count (0–5). Used in tests to provide a reference result
 // that matches the hot-path ParseAndScore result.
 func (e *Engine) GridScoreIdx(req *Request) int {
 	return e.GridScoreIdxVec(e.buildVector(req))
 }
 
-// GridScoreIdxVec runs the fast grid-accelerated k=3 search on an already-built
-// [dims]uint16 vector and returns the fraud count (0–3). This is the hot-path
+// GridScoreIdxVec runs the fast grid-accelerated k=5 search on an already-built
+// [dims]uint16 vector and returns the fraud count (0–5). This is the hot-path
 // entry point called from ParseAndScore.
 func (e *Engine) GridScoreIdxVec(vec [dims]uint16) int {
 	if e.grid == nil {
