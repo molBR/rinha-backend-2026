@@ -183,11 +183,9 @@ func presortedGridIndex(splits0, splits1 [gridSize - 1]uint16, vectors []uint16,
 
 // ── Grid search ───────────────────────────────────────────────────────────────
 
-// gridSearch scans the 5×5 cell neighbourhood of the query using sequential
+// gridSearch scans the 3×3 cell neighbourhood of the query using sequential
 // memory access (vectors are cell-contiguous after buildGrid). Returns the
 // fraud count among the kGrid=5 nearest neighbours found.
-// 5×5 (25 cells) vs 3×3 (9 cells): catches true nearest neighbours that fall
-// 2 cells away in the partition dimensions — eliminates most approximation errors.
 // q must already be pre-converted to int64.
 func (g *GridIndex) gridSearch(vectors []uint16, labels []uint8, q [dims]int64) int {
 	qr0 := gridRank(uint16(q[gridDim0]), g.splits0[:])
@@ -196,12 +194,12 @@ func (g *GridIndex) gridSearch(vectors []uint16, labels []uint8, q [dims]int64) 
 	var tk topK5
 	tk.reset()
 
-	for dr0 := -2; dr0 <= 2; dr0++ {
+	for dr0 := -1; dr0 <= 1; dr0++ {
 		r0 := qr0 + dr0
 		if r0 < 0 || r0 >= gridSize {
 			continue
 		}
-		for dr1 := -2; dr1 <= 2; dr1++ {
+		for dr1 := -1; dr1 <= 1; dr1++ {
 			r1 := qr1 + dr1
 			if r1 < 0 || r1 >= gridSize {
 				continue
