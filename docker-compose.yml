@@ -1,33 +1,19 @@
 services:
-  lb:
-    image: nginx:alpine
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    ports:
-      - "9999:9999"
-    depends_on:
-      api1:
-        condition: service_healthy
-      api2:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          cpus: "0.1"
-          memory: "30MB"
-    restart: unless-stopped
-
   api1:
     image: molbr/rinha-backend-2026:latest
+    pull_policy: always
+    ports:
+      - "9999:9999"
     environment:
-      - PORT=8080
+      - PORT=9999
       - GOMAXPROCS=1
+      - LOOKUP_PATH=/resources/lookup.bin
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ready || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9999/ready || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20
-      start_period: 30s
+      start_period: 15s
     deploy:
       resources:
         limits:
@@ -37,15 +23,21 @@ services:
 
   api2:
     image: molbr/rinha-backend-2026:latest
+    pull_policy: always
+    network_mode: "service:api1"
     environment:
-      - PORT=8080
+      - PORT=9999
       - GOMAXPROCS=1
+      - LOOKUP_PATH=/resources/lookup.bin
+    depends_on:
+      api1:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ready || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9999/ready || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20
-      start_period: 30s
+      start_period: 5s
     deploy:
       resources:
         limits:

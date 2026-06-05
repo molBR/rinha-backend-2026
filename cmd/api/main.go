@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
 	"strconv"
+	"syscall"
 
 	"rinha-backend-2026/internal/fraud"
 )
@@ -28,7 +31,7 @@ var fraudBodies = [6][]byte{
 var buildTime = "dev"
 
 func main() {
-	log.Printf("starting api build=%s (net/http + lookup + contiguous-grid k=5)", buildTime)
+	log.Printf("starting api build=%s (net/http + SO_REUSEPORT + lookup k=5)", buildTime)
 	if v := os.Getenv("GOMAXPROCS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			runtime.GOMAXPROCS(n)
@@ -53,7 +56,7 @@ func main() {
 	if lookup != nil {
 		log.Printf("lookup table loaded from %s", lookupPath)
 	} else {
-		log.Printf("no lookup table at %s; falling back to KNN for all requests", lookupPath)
+		log.Printf("no lookup table at %s; KNN fallback only", lookupPath)
 	}
 
 	mux := http.NewServeMux()
@@ -61,14 +64,35 @@ func main() {
 	mux.HandleFunc("/ready", handleReady)
 
 	port := getenv("PORT", "8080")
-	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: mux,
+	addr := ":" + port
+
+	// Use SO_REUSEPORT so multiple instances can share the same port.
+	// When both api1 and api2 bind port 9999 with REUSEPORT, the kernel
+	// distributes incoming connections between them — no proxy needed.
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				if err := syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1); err != nil {
+					log.Printf("SO_REUSEPORT not available: %v; falling back to normal listen", err)
+				}
+			})
+		},
+	}
+	ln, err := lc.Listen(context.Background(), "tcp", addr)
+	if err != nil {
+		// Fallback: listen without SO_REUSEPORT
+		log.Printf("reuseport listen failed (%v); retrying without", err)
+		ln, err = net.Listen("tcp", addr)
+		if err != nil {
+			log.Fatalf("listen: %v", err)
+		}
 	}
 
-	log.Printf("listening on :%s (net/http)", port)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("listen: %v", err)
+	srv := &http.Server{Handler: mux}
+
+	log.Printf("listening on %s (SO_REUSEPORT)", addr)
+	if err := srv.Serve(ln); err != nil {
+		log.Fatalf("serve: %v", err)
 	}
 }
 
