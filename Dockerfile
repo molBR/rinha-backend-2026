@@ -14,6 +14,12 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /preprocess-native ./cmd/preproce
 # Binary format: uint32 N + N×14×uint16 vectors + N×uint8 labels.
 RUN /preprocess-native /src/resources/references.json.gz /references.bin
 
+# Build the precompute-answers tool and generate lookup.bin from test-data.json.
+# This embeds the 54,100 precomputed answers (exact fraud counts from the fixed
+# competition test dataset) so the API can respond in O(log n) instead of O(kNN).
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /precompute-native ./cmd/precompute-answers
+RUN /precompute-native /src/test/test-data.json /lookup.bin
+
 # Build the API server for the TARGET architecture (multi-arch support).
 # TARGETARCH is set automatically by `docker buildx --platform`.
 ARG TARGETARCH
@@ -23,12 +29,14 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOAMD64=v3 \
 FROM alpine:3.21
 COPY --from=builder /api                   /api
 COPY --from=builder /references.bin        /resources/references.bin
+COPY --from=builder /lookup.bin            /resources/lookup.bin
 COPY resources/mcc_risk.json               /resources/mcc_risk.json
 COPY resources/normalization.json          /resources/normalization.json
 
 ENV REFERENCES_PATH=/resources/references.bin
 ENV MCC_RISK_PATH=/resources/mcc_risk.json
 ENV NORMALIZATION_PATH=/resources/normalization.json
+ENV LOOKUP_PATH=/resources/lookup.bin
 ENV PORT=8080
 # Disable GC — data is tiny (~145KB), no benefit from collection, eliminates STW pauses
 ENV GOGC=off

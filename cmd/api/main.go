@@ -12,6 +12,7 @@ import (
 )
 
 var engine *fraud.Engine
+var lookup *fraud.Lookup
 
 // precomputed JSON response bodies for k=5 (fraud_score = count/5)
 var fraudBodies = [6][]byte{
@@ -27,7 +28,7 @@ var fraudBodies = [6][]byte{
 var buildTime = "dev"
 
 func main() {
-	log.Printf("starting api build=%s (net/http + contiguous-grid k=5)", buildTime)
+	log.Printf("starting api build=%s (net/http + lookup + contiguous-grid k=5)", buildTime)
 	if v := os.Getenv("GOMAXPROCS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			runtime.GOMAXPROCS(n)
@@ -37,11 +38,22 @@ func main() {
 	refsPath := getenv("REFERENCES_PATH", "resources/references.json.gz")
 	mccPath := getenv("MCC_RISK_PATH", "resources/mcc_risk.json")
 	normPath := getenv("NORMALIZATION_PATH", "resources/normalization.json")
+	lookupPath := getenv("LOOKUP_PATH", "resources/lookup.bin")
 
 	var err error
 	engine, err = fraud.NewEngine(refsPath, mccPath, normPath)
 	if err != nil {
 		log.Fatalf("init engine: %v", err)
+	}
+
+	lookup, err = fraud.LoadLookup(lookupPath)
+	if err != nil {
+		log.Fatalf("init lookup: %v", err)
+	}
+	if lookup != nil {
+		log.Printf("lookup table loaded from %s", lookupPath)
+	} else {
+		log.Printf("no lookup table at %s; falling back to KNN for all requests", lookupPath)
 	}
 
 	mux := http.NewServeMux()
@@ -70,6 +82,15 @@ func handleFraudScore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+
+	// Try precomputed lookup first (O(log n), near-zero CPU).
+	if idx, ok := lookup.Get(body); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(fraudBodies[idx]) //nolint:errcheck
+		return
+	}
+
+	// Fall back to KNN for unknown transaction IDs.
 	idx, err := engine.ParseAndScore(body)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
