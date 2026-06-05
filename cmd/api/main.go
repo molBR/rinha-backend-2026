@@ -1,40 +1,33 @@
 package main
 
 import (
+	"io"
 	"log"
-	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
-	"syscall"
 
 	"rinha-backend-2026/internal/fraud"
-	"rinha-backend-2026/internal/rawhttp"
 )
 
 var engine *fraud.Engine
 
-// apiHandler wires fraud.Engine into the rawhttp.Handler interface.
-type apiHandler struct{}
-
-func (h *apiHandler) ServeFraudScore(body []byte) []byte {
-	idx, err := engine.ParseAndScore(body)
-	if err != nil {
-		return rawhttp.BadRequestResponse()
-	}
-	return rawhttp.FraudResponse(idx)
-}
-
-func (h *apiHandler) ServeReady() []byte {
-	return rawhttp.ReadyResponse()
+// precomputed JSON response bodies for k=5 (fraud_score = count/5)
+var fraudBodies = [6][]byte{
+	[]byte(`{"approved":true,"fraud_score":0.0}`),
+	[]byte(`{"approved":true,"fraud_score":0.2}`),
+	[]byte(`{"approved":true,"fraud_score":0.4}`),
+	[]byte(`{"approved":false,"fraud_score":0.6}`),
+	[]byte(`{"approved":false,"fraud_score":0.8}`),
+	[]byte(`{"approved":false,"fraud_score":1.0}`),
 }
 
 // buildTime is stamped at compile time via -ldflags "-X main.buildTime=..."
-// to let us verify the running binary is the expected version in logs.
 var buildTime = "dev"
 
 func main() {
-	log.Printf("starting api build=%s (rawhttp + scm_rights + contiguous-grid k=5)", buildTime)
+	log.Printf("starting api build=%s (net/http + contiguous-grid k=5)", buildTime)
 	if v := os.Getenv("GOMAXPROCS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			runtime.GOMAXPROCS(n)
@@ -51,102 +44,43 @@ func main() {
 		log.Fatalf("init engine: %v", err)
 	}
 
-	srv := rawhttp.New(&apiHandler{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/fraud-score", handleFraudScore)
+	mux.HandleFunc("/ready", handleReady)
 
-	// Unix socket: receives TCP file descriptors from the SCM_RIGHTS LB.
-	// The LB passes the accepted client connection FD directly to us,
-	// eliminating all HTTP proxying overhead.
-	ctrlSocket := os.Getenv("CTRL_SOCKET")
-	if ctrlSocket != "" {
-		_ = os.Remove(ctrlSocket)
-		ctrlLn, err := net.Listen("unix", ctrlSocket)
-		if err != nil {
-			log.Fatalf("ctrl socket listen %s: %v", ctrlSocket, err)
-		}
-		if err := os.Chmod(ctrlSocket, 0666); err != nil {
-			log.Printf("chmod ctrl socket: %v", err)
-		}
-		log.Printf("SCM_RIGHTS control socket ready: %s", ctrlSocket)
-		go serveSCMRights(ctrlLn, srv)
-	}
-
-	// TCP listener: serves /ready for healthcheck AND as fallback if no LB.
 	port := getenv("PORT", "8080")
-	tcpLn, err := net.Listen("tcp", ":"+port)
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	log.Printf("listening on :%s (net/http)", port)
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+}
+
+func handleFraudScore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Fatalf("listen tcp :%s: %v", port, err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
 	}
-	log.Printf("listening on :%s (rawhttp)", port)
-
-	for {
-		conn, err := tcpLn.Accept()
-		if err != nil {
-			log.Printf("accept: %v", err)
-			continue
-		}
-		go srv.ServeConn(conn) //nolint:errcheck
+	idx, err := engine.ParseAndScore(body)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(fraudBodies[idx]) //nolint:errcheck
 }
 
-// serveSCMRights receives TCP file descriptors from the LB via Unix socket
-// and handles each connection with the rawhttp server.
-func serveSCMRights(ln net.Listener, srv *rawhttp.Server) {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		go receiveAndServe(conn.(*net.UnixConn), srv)
-	}
-}
-
-// receiveAndServe reads FDs from a Unix control connection and dispatches
-// each received TCP connection to the rawhttp server.
-func receiveAndServe(uc *net.UnixConn, srv *rawhttp.Server) {
-	defer uc.Close()
-	buf := make([]byte, 1)
-	oob := make([]byte, 24) // enough for one SCM_RIGHTS message (16B cmsghdr + 4B fd + 4B pad)
-
-	for {
-		_, oobn, _, _, err := uc.ReadMsgUnix(buf, oob)
-		if err != nil {
-			return
-		}
-
-		fd := parseUnixRights(oob[:oobn])
-		if fd < 0 {
-			continue
-		}
-
-		file := os.NewFile(uintptr(fd), "tcp-conn")
-		tcpConn, err := net.FileConn(file)
-		_ = file.Close() // net.FileConn dup'd the FD; close our copy
-		if err != nil {
-			_ = syscall.Close(fd)
-			continue
-		}
-
-		if tc, ok := tcpConn.(*net.TCPConn); ok {
-			_ = tc.SetNoDelay(true)
-			_ = tc.SetKeepAlive(true)
-		}
-
-		go srv.ServeConn(tcpConn) //nolint:errcheck
-	}
-}
-
-// parseUnixRights extracts the first file descriptor from an SCM_RIGHTS
-// control message. Returns -1 if none found.
-func parseUnixRights(oob []byte) int {
-	msgs, err := syscall.ParseSocketControlMessage(oob)
-	if err != nil || len(msgs) == 0 {
-		return -1
-	}
-	fds, err := syscall.ParseUnixRights(&msgs[0])
-	if err != nil || len(fds) == 0 {
-		return -1
-	}
-	return fds[0]
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("OK")) //nolint:errcheck
 }
 
 func getenv(key, def string) string {
