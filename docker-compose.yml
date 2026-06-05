@@ -24,7 +24,7 @@ services:
     image: molbr/rinha-backend-2026:latest
     environment:
       - PORT=8080
-      - GOMAXPROCS=1
+      - GOMAXPROCS=2
       - CTRL_SOCKET=/sockets/lb-ctrl-1.sock
     volumes:
       - sockets:/sockets
@@ -45,7 +45,7 @@ services:
     image: molbr/rinha-backend-2026:latest
     environment:
       - PORT=8080
-      - GOMAXPROCS=1
+      - GOMAXPROCS=2
       - CTRL_SOCKET=/sockets/lb-ctrl-2.sock
     volumes:
       - sockets:/sockets
