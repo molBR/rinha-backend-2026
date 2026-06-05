@@ -31,7 +31,7 @@ import (
 
 const (
 	dims       = 14
-	maxSamples = 500_000 // 500K sample (1024 cells × ~488/cell); 3×3 search → ~4.4K vectors/query
+	maxSamples = 30_000 // 30K sample (1024 cells × ~29/cell); 3×3 search → ~264 vectors/query (~50× faster than 500K)
 
 	// Grid parameters — must stay in sync with internal/fraud/grid.go.
 	gridDim0  = 0  // partition axis 0: amount
