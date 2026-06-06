@@ -69,10 +69,15 @@ func main() {
 	// Use SO_REUSEPORT so multiple instances can share the same port.
 	// When both api1 and api2 bind port 9999 with REUSEPORT, the kernel
 	// distributes incoming connections between them — no proxy needed.
+	//
+	// SO_REUSEPORT = 15 (0xF) on Linux (all architectures).
+	// syscall.SO_REUSEPORT is not always exported by Go's syscall package
+	// for linux/amd64, so we use the raw constant.
+	const soReusePort = 0xF
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				if err := syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1); err != nil {
+				if err := syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1); err != nil {
 					log.Printf("SO_REUSEPORT not available: %v; falling back to normal listen", err)
 				}
 			})
